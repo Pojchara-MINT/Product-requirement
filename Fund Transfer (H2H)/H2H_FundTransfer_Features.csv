@@ -1,0 +1,297 @@
+Module Name,Feature ID,Feature Name,Priority,Summary,User Story,Objective,Business Operations,Other Summary & Notes,Use Cases,UAT Approach,MD File Link
+M7: Platform Configuration,F1,Platform Configuration,Good-to-have,"Allows admin to set up all business rules (topics, fields, approvals, documents, duplicate rules) without code changes. System must apply config changes immediately and not affect in-flight transactions.","As a System Administrator, I want to configure all business rules (transfer topics, form fields, approval chains, document requirements, duplicate detection rules, and bank reference data) through an admin interface, so the system can be adapted without code deployments or engineering involvement.","Gives business administrators full control over how fund transfers work — without waiting for IT. When a new transfer type is needed, approval rules change, or compliance requires a new document type, admins update the settings directly and the system adapts immediately. No engineering involvement required.","• Create and manage transfer topic types (e.g., Lending, Customer Transfer)
+• Configure dynamic form fields and labels per topic
+• Define approval chains (Checker → Signer sequence) per topic
+• Set mandatory document requirements per topic
+• Configure duplicate detection rules (up to 13 per topic)
+• Maintain bank codes, bank names, and PromptPay proxy types
+• Set file upload constraints (allowed types, max size per document category)","Good-to-have — other features operate with seeded/default config while F1 is deferred. Recommended before production go-live. Config changes take effect immediately without restart. In-flight transactions retain the config snapshot from creation time.","Happy Path:
+• Admin creates TEST_TOPIC with custom fields, mandatory doc, and 2-step approval chain → changes take effect immediately
+• Maker opens the form, selects TEST_TOPIC, sees correct fields and validation rules
+
+Unhappy Path:
+• Admin submits a topic with a code that already exists → rejected with clear error; existing config unchanged
+• Admin leaves field label blank → save blocked with validation error
+
+Edge Cases:
+• Admin updates field label while FTT is in-progress → in-flight transaction retains old config snapshot; new requests pick up updated config
+• Admin configures zero duplicate-check rules → duplicate detection disabled for that topic","Who: System Administrator + Business Analyst
+Environment: UAT with empty configuration tables
+
+Steps:
+1. Create topic TEST_TOPIC with 2 required fields, 1 mandatory doc, and 2-step chain
+2. Maker logs in → selects TEST_TOPIC → confirms field labels appear and are required
+3. Admin updates one field label → Maker refreshes → confirms updated label appears (no deployment)
+4. Admin creates a second topic with same code → confirms error shown, no duplicate created
+
+Sign-off: All 4 steps pass; no code deployment was required at any point",
+M3: Partner Gateway,F2,Fund Transfer Bank Integration,Must-have,"Enables the system to securely communicate with KBank for account verification, fund transfer submission (3 outcomes: TRANSFER_SUCCESS, PENDING_BANK, or retry on D3), and settlement monitoring — with a standalone precheck API also available for other internal systems. System must log all significant bank interactions and handle retries without creating duplicate transfers.","As the system, I want to communicate reliably and securely with KBank for account verification, fund transfer submission, and settlement monitoring, so all significant bank operations are automated and fully audited.
+
+As a sales agent or source system, I want to call a standalone Account Verification Precheck API to confirm a destination account is valid before creating a fund transfer request.","Ensures the company can trust every transfer it sends. Before money moves, the system confirms the destination account exists and is valid. Once submitted, it monitors the bank for the final settlement outcome. Every significant bank communication is automatically recorded — giving the company a complete evidence trail for compliance, dispute resolution, and daily reconciliation. A standalone account check is also available for other internal teams to verify a customer's account before a transfer request is even created.","• Call standalone Account Verification Precheck API — independent of FTT flow (e.g., for sales process pre-screening)
+• Trigger FTT background account verification as part of FTT lifecycle (Step 1, async)
+• Automatic rsTransID freshness check before submission (TP7 — no user action needed)
+• Submit fund transfer instruction to bank (Step 2) — 3 outcomes: Success → TRANSFER_SUCCESS; Fail code 9999 → PENDING_BANK (Step 3 begins); Fail other code → FTT stays PENDING_SIGNER (fail reason on D3)
+• Monitor bank for final settlement result (Step 3 polling — optional, only triggered after code 9999) up to 3 polls; Success → TRANSFER_SUCCESS; Fail → TRANSFER_FAIL; In Progress after 3 polls → stays PENDING_BANK (resolved by T+1 reconcile, F7)
+• Review Bank Step Log entries per FTT for compliance and audit","Must-have. KBank is the sole current partner bank; IPartnerGateway abstraction enables future banks (SCB, BBL) without core changes. Authentication auto-renews before expiry (max 5 token requests per 30-minute window). Step 3 is optional — only triggered after code 9999 (PENDING_BANK). Step 3 poll records are NOT written to Bank Step Log (high frequency, low audit value). Idempotent submission prevents duplicate bank transfers on retry.","Happy Path:
+• Precheck (sales): Source system calls Precheck API with valid account → bank confirms, returns account name → result usable by caller
+• FTT background check: Worker verifies account → is_account_verified=TRUE, rsTransID stored
+• Transfer submission — Success: Signer approves → Step 2 submitted → bank returns Success → FTT moves to TRANSFER_SUCCESS
+• Transfer submission — code 9999: Bank returns Fail code 9999 → FTT moves to PENDING_BANK → Step 3 monitoring begins
+• Settlement monitoring (Step 3): Worker polls → bank confirms completed (Success) → FTT moves to TRANSFER_SUCCESS
+
+Unhappy Path:
+• Invalid account on precheck or background check → Fail returned with clear reason
+• Bank rejects Step 2 with known failure code (≠ 9999) → result in Bank Step Log, FTT stays PENDING_SIGNER, Signer sees error on D3
+• Bank returns code 9999 on Step 2 → FTT moves to PENDING_BANK; Step 3 polling begins
+• Step 3 exhausts 3 retries with In Progress → FTT stays PENDING_BANK; T+1 reconcile resolves
+• Step 3 returns Fail → FTT moves to TRANSFER_FAIL; D4 and failure alert triggered (F6)
+• Auth rate limit reached → operations wait until window resets
+
+Edge Cases:
+• rsTransID expired by Signer approval time → TP7 auto re-verifies, no user action needed
+• Network timeout during account verify → verify marked failed; manual retry from D3
+• System retries same transfer → idempotent, no duplicate bank transfer
+• Step 3 exhausts 3 retries without final result → FTT stays PENDING_BANK; resolved via reconciliation (F7)","Who: Technical team / QA (no direct business UI — acceptance via system behaviour and audit records)
+Environment: UAT connected to KBank sandbox
+
+Steps:
+1. Call Precheck API with known valid account → account verified, account name returned
+2. Call Precheck API with invalid account → Fail result returned clearly
+3. Trigger FTT background account verify for valid account → is_account_verified=TRUE, rsTransID stored
+4. Trigger Step 2 submission with Success response → FTT moves to TRANSFER_SUCCESS, Bank Step Log record created
+5. Trigger Step 2 submission with Fail code 9999 response → FTT moves to PENDING_BANK, Step 3 polling begins
+6. Trigger Step 2 submission with Fail other code response → FTT stays PENDING_SIGNER, fail reason visible on D3
+7. Confirm auth token is reused within valid window; new token auto-obtained on expiry
+8. Confirm Step 3 polling calls do NOT create Bank Step Log records
+
+Sign-off: All 8 steps verified; audit log records match agreed fields",
+M1: Fund Transfer Request,F3,Fund Transfer Request,Must-have,"Provides two channels to initiate a fund transfer request — Maker via UI (single or batch) and source system via API (auto-approve). Approved requests enter the FTT pipeline; rejected requests are permanently closed. System must block submission of incomplete requests and prevent duplicate FTTs from the same content.","As a Maker, I want to create single or batch fund transfer requests via the UI and make an approval decision (approve or reject), so approved requests enter the downstream transaction pipeline.
+
+As a source system (e.g., Lending, Customer Transfer), I want to submit a fund transfer request via API with auto-approval in a single call, so transfers are processed without manual Maker intervention (straight-through processing).","Gives operations staff a structured, controlled way to initiate fund transfers — single entries or in bulk — with clear validation gates so incomplete or incorrect requests cannot enter the pipeline. Source systems that generate transfers programmatically (such as loan disbursement) can submit and auto-approve requests directly without manual Maker involvement.","• Create a single transfer request via form (D1) — form fields adapt dynamically by selected topic
+• Upload a batch file to create multiple transfer requests in one action
+• Attach supporting documents per request (type and size validated)
+• Approve a request → FTT created, enters Checker queue
+• Reject a request with mandatory reason → permanently closed, no FTT created
+• Submit via API with auto-approve flag (source systems — straight-through processing)
+• View row-level errors for any failed batch rows while valid rows proceed","Must-have. D1 is the Maker-facing screen. Form field labels and required/optional rules are topic-driven (F1 config). Batch supports mixed valid/invalid rows. request_hash (SHA256) protects against duplicate FTTs from same content. File upload validates content by magic number (not just extension) for security. FTR has 3 states: PENDING_MAKER → FTR_APPROVED / FTR_REJECTED.","Happy Path:
+• Single: Maker fills form, attaches mandatory doc, approves → FTT created, enters Checker queue
+• Batch: Maker uploads file → all rows pass → requests created → Maker approves → FTTs created
+• API: Source system sends request with auto=true and valid credentials → FTT created in one call
+
+Unhappy Path:
+• Maker submits form with missing required field → form blocked, field-level error shown
+• Maker tries to approve without mandatory document → approve blocked with clear message
+• Maker rejects without selecting rejection reason → reject blocked; reason is mandatory
+• Source system sends API request with invalid credentials → request rejected, nothing created
+
+Edge Cases:
+• Batch file has mix of valid and invalid rows → valid rows create requests; invalid rows show row-level errors; processing continues
+• Source system retries same API call (network timeout) → duplicate detected, returns existing request, no second record created
+• Maker uploads file with allowed extension but mismatched content (e.g., executable as PDF) → rejected based on file content, not extension","Who: Maker role + Business Analyst
+Environment: UAT with F4 available to confirm FTTs are created
+
+Steps:
+1. Create single request for TEST_TOPIC, fill all fields, attach required doc, approve → confirm FTT appears
+2. Submit form with required field empty → confirm form blocked with error
+3. Create request without mandatory doc, try to approve → confirm approve blocked
+4. Upload batch with 5 valid + 2 invalid rows → confirm 5 requests created, 2 errors shown with row detail
+5. Reject a request → confirm permanently closed (no further actions available)
+6. Technical team submits API request with auto-approve → confirm FTT created in one call
+
+Sign-off: All 6 steps pass",
+M2: Fund Transfer Transaction,F4,FTT structure + All task display,Must-have,"Manages the full FTT lifecycle (7 states), runs background verification in parallel, and distributes tasks to Checker and Signer queues on the D2 worklist. System must show check progress immediately on D2 and enforce the readiness gate before Checker can approve.","As a Checker, I want to see all FTTs pending my review on the D2 worklist with background check status indicators, so I can book and review cases confidently knowing the checks are complete.
+
+As a Signer, I want to see all FTTs that have passed Checker review on my D2 worklist, so I can book and make the final approval decision before bank submission.
+
+As the system, I want to create FTT records from approved FTRs, run parallel background verification, and distribute tasks to the correct Checker and Signer pools automatically.","Ensures no transfer request skips review, no reviewer acts without complete information, and every decision is permanently recorded. The moment a request is approved, the system begins verifying it in the background — confirming the destination account with the bank and screening for duplicates — and routes the case to the right reviewer queue. Checkers and Signers each see their own pending tasks with clear pass/fail indicators so they can work efficiently and with confidence.","Checker on D2:
+• View all FTTs in the Checker review phase with background check indicators (✅ Pass / ⏳ In Progress / ❌ Fail)
+• See FTT summary: txn ID, amount, beneficiary, topic, current state
+• Manually book (claim) any unassigned FTT from the Checker pool
+• Accept or return auto-assigned tasks (system assigns up to 2 per user)
+• Search by contract number or beneficiary name
+
+Signer on D2:
+• View all FTTs that have passed Checker review, in the Signer phase, with background check indicators
+• See FTT summary: txn ID, amount, beneficiary, topic, current state
+• Manually book (claim) any unassigned FTT from the Signer pool
+• Accept or return auto-assigned tasks (system assigns up to 2 per user)
+• Search by contract number or beneficiary name
+• Note: Signer's approval action (taken on D3 in F5) triggers bank submission (3 outcomes: TRANSFER_SUCCESS, PENDING_BANK, or retry); post-transfer TP8 integration runs after TRANSFER_SUCCESS","Must-have. 7 FTT states: CREATED → PENDING_CHECKER → PENDING_SIGNER → [TRANSFER_SUCCESS | PENDING_BANK | TRANSFER_FAIL] → REJECTED. Bank Step 2 outcome: Success → TRANSFER_SUCCESS; Fail code 9999 → PENDING_BANK (Step 3 → reconcile resolves); Fail other → stays PENDING_SIGNER. Readiness gate: Checker cannot approve until both is_account_verified AND is_business_validated = TRUE. Background checks run async — FTT visible on D2 immediately. Bank Step Log: fund_transfer_bank_step_log. Integration Step Log: fund_transfer_integration_step_log (action_type: POST_TRANSFER for TP8). FTT state transitions published as events: ftt.created, ftt.pending_checker, ftt.pending_signer, ftt.pending_bank, ftt.transfer_success, ftt.transfer_fail, ftt.rejected. Primary module: M2. Verification rules: M4. D2 worklist: M6 (GOKU/Distribute).","Happy Path:
+• FTR approved → FTT created (CREATED) → background checks triggered in parallel → FTT immediately visible on D2 Checker pool with ⏳ indicators
+• Checks complete and pass → is_ready_to_check=TRUE → D2 indicators update to ✅
+• Checker books FTT → TP2 internal rule recheck runs → Checker approves → TP4 (account verify + rule recheck) → FTT distributed to Signer pool
+• Signer assigned → TP5 internal rule recheck → Signer reviews on D3 (F5)
+
+Unhappy Path:
+• Account verification fails → is_account_verified=FALSE → is_ready_to_check=FALSE → FTT visible on D2 with ❌ but Checker cannot approve → Checker retries from D3
+• Internal rule check detects duplicate → is_business_validated=FALSE → Checker sees ⚠️ warning → uses judgement to approve or reject
+
+Edge Cases:
+• Two Makers approve same-content FTR simultaneously → request_hash (SHA256) blocks second FTT from being created
+• Checker auto-assigned but all 2 slots full → FTT remains in D2 pool; next available slot triggers assignment
+• FTT sits in D2 for 30 minutes before Checker books it → TP2 re-triggers internal rule check on assignment, catching any new duplicates","Who: Checker role + Business Analyst
+Environment: UAT with F2 and F3 complete
+
+Steps:
+1. Approve a transfer request (F3) → confirm FTT appears on D2 with check-in-progress indicators immediately (before checks complete)
+2. Wait for background checks to pass → confirm is_ready_to_check becomes TRUE, D2 indicator updates to ✅
+3. Checker books FTT manually from D2 → confirm it appears on D3 (F5)
+4. Trigger auto-assignment → confirm system fills up to 2 slots and task appears
+5. Submit duplicate transfer (same content) → confirm only one FTT is created
+6. Trigger transfer with invalid destination account → confirm is_account_verified=FALSE, Checker cannot approve from D3 until retried
+
+Sign-off: All 6 steps pass",
+M2: Fund Transfer Transaction,F5,FTT - My task display,Must-have,"Provides a shared D3 review screen for Checker and Signer with full FTT detail and approval actions. Signer's approval triggers bank submission (3 outcomes: TRANSFER_SUCCESS, PENDING_BANK, or retry on D3). After TRANSFER_SUCCESS, TP8 post-transfer integration runs automatically in the background (Lending: Create Loan + Disburse). No pre-submission integration; no compensation logic.","As a Checker, I want to review assigned FTT details and background check results on D3 and take an approval decision (approve, reject, retry, or return to pool).
+
+As a Signer, I want to review the full FTT on D3 and — upon approval — trigger bank submission (Step 2). I want to see bank Step 2 failure details directly on D3 if the bank rejects with a known failure code (≠ 9999) so I can decide to retry or reject. I want to be informed when the FTT moves to PENDING_BANK (code 9999) awaiting bank confirmation.","Gives Checkers and Signers a complete, single-screen view of every transfer case before they act. When Signer approves, the system immediately submits to the bank — three outcomes: confirmed success moves to TRANSFER_SUCCESS (TP8 post-transfer integration then runs automatically in the background for Lending transfers), bank-cannot-confirm-yet moves to PENDING_BANK (Step 3 monitoring begins), or known rejection keeps the FTT in PENDING_SIGNER for retry. If bank Step 2 fails with a known code, the Signer sees the full failure detail on the same screen and can respond without IT involvement.","Checker actions on D3:
+• Review FTT details, background check results, attached documents, Bank Step Log, Integration Step Log (TP8 history)
+• Approve (blocked until is_ready_to_check = TRUE)
+• Reject with mandatory reason (→ REJECTED)
+• Retry failed or incomplete background checks
+• Return FTT to D2 pool
+
+Signer actions on D3:
+• Review full FTT history including Checker decision
+• Approve → triggers TP7 ref key check → bank Step 2 submission:
+  - Success → FTT moves to TRANSFER_SUCCESS; TP8 runs asynchronously (Lending: Create Loan + Disburse; non-Lending: skipped)
+  - Fail code 9999 → FTT moves to PENDING_BANK; Step 3 monitoring begins (up to 3 polls); optional PENDING_BANK notification sent to Signer
+  - Fail other code → FTT stays PENDING_SIGNER; bank fail reason shown prominently on D3
+• Review bank Step 2 fail reason on D3 (FTT stays PENDING_SIGNER on Step 2 fail ≠ 9999)
+• Retry after bank Step 2 fail (re-runs bank Step 2 from scratch)
+• Reject with mandatory reason (→ REJECTED)","Must-have. D3 is shared by Checker and Signer — same layout, different available actions by FTT state and role. Bank Step 2 has 3 outcomes: Success → TRANSFER_SUCCESS; Fail code 9999 → PENDING_BANK (Step 3 up to 3 polls); Fail other → stays PENDING_SIGNER. TP8 (Lending topic): Core Banking Create Loan + Disburse AFTER TRANSFER_SUCCESS — runs asynchronously; Signer does not wait. No pre-submission integration (TP6 removed). No compensation logic. PENDING_BANK notification is optional. FTT remains PENDING_SIGNER on bank Step 2 fail (code ≠ 9999). Primary module: M2. TP8 rule: M4. Bank Step 2/3: M3.","Happy Path — Checker:
+• Checker books FTT from D2 → reviews details, check results (✅), documents → all pass (is_ready_to_check=TRUE) → approves → FTT moves to PENDING_SIGNER
+
+Happy Path — Signer (Step 2 Success):
+• Signer books → reviews → approves → TP7 ref key check → bank Step 2 submitted → Success → FTT moves to TRANSFER_SUCCESS → TP8 triggers asynchronously in background (Lending: Create Loan + Disburse; non-Lending: skipped)
+
+Unhappy Path — Bank Step 2 Fail code 9999 (bank cannot confirm yet):
+• Signer approves → TP7 → Step 2 → bank returns Fail code 9999 → FTT moves to PENDING_BANK → Step 3 monitoring begins (up to 3 polls) → optional PENDING_BANK notification to Signer → Step 3 Success → TRANSFER_SUCCESS → TP8; or Step 3 Fail → TRANSFER_FAIL → D4 (F6); or Step 3 In Progress after 3 polls → stays PENDING_BANK → T+1 reconcile resolves (F7)
+
+Unhappy Path — Bank Step 2 Fail (code ≠ 9999):
+• Signer approves → TP7 → Step 2 → bank returns Fail (code ≠ 9999) → Bank Log Fail → FTT stays PENDING_SIGNER → D3 shows bank fail reason and error code prominently → Signer retries or rejects
+
+Edge Cases:
+• Checker retries failed background check → re-runs async, D3 indicator updates
+• Checker or Signer returns FTT to D2 → FTT available for another user to book
+• TP8 post-transfer integration runs asynchronously after TRANSFER_SUCCESS — Signer does not wait for TP8 to complete on D3; TP8 result visible in Integration Step Log on D3/D4","Who: Checker and Signer roles + Business Analyst
+Environment: UAT with F4 complete; Lending topic configured
+
+Checker steps:
+1. Checker books FTT from D2 → confirm details, documents, check results visible on D3
+2. Checker approves with all checks passed → confirm FTT moves to PENDING_SIGNER
+3. Checker tries to approve with is_ready_to_check=FALSE → confirm approve is blocked
+4. Checker retries failed check → confirm it re-runs and updates indicator on D3
+
+Signer steps (Bank Step 2 outcomes):
+5. Signer approves → simulate Step 2 Success → confirm FTT moves to TRANSFER_SUCCESS; Bank Log shows Step 2 Success
+6. Signer approves → simulate Step 2 Fail code 9999 → confirm FTT moves to PENDING_BANK; Step 3 polling begins; simulate Step 3 Success → confirm TRANSFER_SUCCESS
+7. Signer approves → simulate Step 2 Fail (code ≠ 9999) → confirm FTT stays PENDING_SIGNER; D3 shows bank fail reason and error code
+
+TP8 Post-Transfer Integration (Lending topic):
+8. Signer approves Lending FTT → Step 2 Success → confirm TRANSFER_SUCCESS → confirm TP8 triggers asynchronously → Integration Log shows POST_TRANSFER/Success
+
+Sign-off: All 8 steps pass",
+M2: Fund Transfer Transaction,F6,FTT - Status display,Must-have,"When an FTT reaches TRANSFER_FAIL state (from bank Step 3 Fail or T+1 reconcile), the system notifies all associated users in real time and surfaces D4 for Ops to review full Bank Step Log and Integration Step Log (TP8 history) before taking final action (reject or re-submit).","As an Ops Manager, I want to receive an immediate in-app notification when an FTT moves to TRANSFER_FAIL state, and be able to access the D4 screen showing the full Bank Step Log, Integration Step Log (TP8 history), and approval history, so I can review the failure context and decide to re-submit (returns FTT to PENDING_CHECKER) or reject permanently.","Protects the business when a transfer is confirmed as failed — whether by bank Step 3 returning Fail or the T+1 reconciliation file. The moment the TRANSFER_FAIL state is set, the system immediately alerts all relevant staff and gives Ops everything they need on one screen to make a final decision — reject the transfer permanently or restart the approval pipeline.","Ops Manager and associated users on notification:
+• Receive real-time in-app toast/banner on whichever screen (D1–D4) they are currently viewing
+• Notification shows: txn ID, amount, beneficiary name, bank fail reason, deep-link to D4
+
+On D4:
+• View full Bank Step Log (Step 1, 2, 3) with results and timestamps
+• View full Integration Step Log (TP8 POST_TRANSFER history) with results and timestamps
+• View full FTT approval trail: created by, Checker, Signer, all timestamps and state changes
+• View FTT transfer details and attached documents
+• Reject FTT permanently with mandatory reason (→ REJECTED)
+• Re-submit FTT — returns FTT to PENDING_CHECKER, restarts full approval pipeline","Must-have. D4 is triggered by TRANSFER_FAIL state — which arrives from bank Step 3 Fail (primary path, F5) or T+1 reconciliation (secondary path, F7). No automatic compensation. Integration Step Log on D4 shows TP8 POST_TRANSFER history (not compensation). Re-submit restarts pipeline; next Signer re-runs bank submission; TP8 re-runs after new TRANSFER_SUCCESS. D4 not accessible until FTT is in TRANSFER_FAIL. Notification is non-interrupting toast on current screen. Primary module: M2.","Happy Path (failure resolution):
+• FTT moves to TRANSFER_FAIL (Step 3 Fail or reconcile) → notification sent to all associated users → Ops opens D4 → reviews full logs → decides to re-submit (→ PENDING_CHECKER) or reject (→ REJECTED)
+
+Unhappy Path:
+• Ops tries to access D4 for FTT not in TRANSFER_FAIL → D4 not available; FTT only visible via history/search
+
+Edge Cases:
+• Ops receives notification while reviewing a different FTT on D3 → notification appears as toast without interrupting current work; Ops clicks through to D4 when ready
+• Re-submit triggers full restart: FTT returns to PENDING_CHECKER → approval pipeline repeats → next Signer approval re-runs bank submission from scratch; TP8 re-runs after new TRANSFER_SUCCESS","Who: Ops Manager + Business Analyst + Technical team (to simulate TRANSFER_FAIL)
+Environment: UAT with F4 and F5 complete
+
+Steps:
+1. Simulate bank Step 3 Fail → confirm FTT moves to TRANSFER_FAIL; Bank Log shows Step 3 Fail entry
+2. Confirm in-app notification received by all associated users (Maker, Checker, Signer, Ops Manager) with txn ID, amount, beneficiary, and bank fail reason
+3. Ops navigates to D4 → confirm full Bank Log, Integration Log (TP8 history), FTT details, and documents are displayed
+4. Ops rejects from D4 → confirm FTT moves to REJECTED
+5. Ops re-submits from D4 → confirm FTT returns to PENDING_CHECKER and pipeline restarts
+
+Sign-off: All 5 steps pass",
+M5: Reconciliation,F7,Bank Reconcile with Integration,Must-have,"Runs a daily automated comparison between KBank's settlement file and system FTT records, classifies each as MATCHED / MISMATCHED / UNMATCHED, and delivers a report. Resolves PENDING_BANK FTTs to TRANSFER_SUCCESS (then TP8 triggers) or TRANSFER_FAIL (then D4 alert triggers). No compensation logic.","As an Ops Manager, I want the system to automatically run a daily reconciliation between KBank's settlement records and system FTT records, and receive a summary report via Email and Google Chat, so I can confirm financial accuracy and investigate any mismatches or unmatched records.
+
+As the system, I want to resolve PENDING_BANK FTTs based on the reconciliation file — confirmed success moves FTT to TRANSFER_SUCCESS (TP8 triggers); confirmed failure moves FTT to TRANSFER_FAIL (D4 alert triggers) — so that FTTs that could not be resolved by real-time Step 3 polling are resolved by the next business day.","Provides the business with a daily confirmation that every transfer the system sent was actually processed by the bank — and surfaces any discrepancies before they become financial or compliance problems. When the bank's settlement file arrives each morning, the system compares it automatically, flags mismatches, and resolves PENDING_BANK FTTs: confirmed success triggers post-transfer integration (TP8); confirmed failure triggers the TRANSFER_FAIL alert and D4 screen. This is the safety net for transfers where real-time Step 3 polling was inconclusive.","• Receive and review daily reconciliation summary report (Email + Google Chat)
+• View MISMATCHED records with mismatch reasons (e.g., amount difference, status conflict)
+• View UNMATCHED records (in bank file but not in system) for investigation
+• Confirm PENDING_BANK FTTs have been resolved: TRANSFER_SUCCESS or TRANSFER_FAIL
+• Monitor Integration Step Log entries added by reconciliation-triggered TP8 (PENDING_BANK → TRANSFER_SUCCESS path)
+• View discrepancy findings when reviewing affected FTTs on D3 or D4","Must-have. Batch runs at 07:00 AM daily. KBank uploads pipe-delimited CSV to S3 between 03:00–06:00 AM. Three-way classification: MATCHED / MISMATCHED / UNMATCHED. Reconciliation resolves PENDING_BANK FTTs: Success → TRANSFER_SUCCESS (TP8 triggers); Fail → TRANSFER_FAIL (D4 alert triggers). No compensation logic. Processed files → S3 processed/; failed files → S3 failed/ with notification. Data stored in kbank_reconcile_batch and kbank_reconcile_detail.","Happy Path:
+• KBank uploads settlement CSV to S3 overnight → batch runs at 07:00 AM → all records match → report shows all MATCHED → no FTT updates → report sent via email and Google Chat
+• Reconciliation finds PENDING_BANK FTT where bank file confirms success → FTT moves to TRANSFER_SUCCESS → TP8 post-transfer integration triggered (Lending: Create Loan + Disburse)
+
+Unhappy Path:
+• Reconciliation finds PENDING_BANK FTT where bank file shows failed → FTT moves to TRANSFER_FAIL → D4 and TRANSFER_FAIL alert triggered → MISMATCHED record logged with reason
+• Amount mismatch (system shows THB 50,000; bank shows THB 55,000) → MISMATCHED with reason → Ops investigates
+• rsTransID in KBank CSV not found in system → UNMATCHED → escalated for investigation
+
+Edge Cases:
+• CSV file has a corrupted row → file moved to failed/ folder → notification sent → KBank re-sends
+• FTT was already REJECTED by Ops from D4 before reconciliation runs → audit record only; no further action","Who: Ops Manager + Business Analyst + Technical team (to provide sample CSV)
+Environment: UAT with F4, F5, F6 complete; S3 bucket configured
+
+Steps:
+1. Upload CSV where all records match → confirm all MATCHED, no FTT updates, report via email and Google Chat
+2. Upload CSV where one record confirms successful transfer for FTT in PENDING_BANK → confirm FTT moves to TRANSFER_SUCCESS → confirm TP8 post-transfer integration triggers (Lending: Create Loan + Disburse) → confirm Integration Log updated
+3. Upload CSV where one record shows failed transfer for FTT in PENDING_BANK → confirm FTT moves to TRANSFER_FAIL → confirm TRANSFER_FAIL alert and D4 triggered → confirm MISMATCHED recorded with reason
+4. Upload CSV with rsTransID not in system → confirm UNMATCHED recorded, notification includes detail
+5. Upload CSV with corrupted row → confirm file moved to failed/ folder and notification sent
+
+Sign-off: All 5 steps pass",
+Pay-Up Refund System (External),F8,Auto Create Fund Transfer Request from Pay-Up Refund,Must-have,"Monthly batch identifies eligible pay-up refund balances by event type, verifies customer has a registered account, auto-creates FTR with pre-attached documents, and reserves the balance immediately to prevent double-refund. Maker reviews before the FTT enters the standard pipeline. Customers with no account or non-eligible events are excluded.","As the system (monthly batch), I want to scan pay-up balances at month-end, identify balances eligible for auto-refund by event type, verify the customer has a registered destination account, reserve the eligible balance to prevent double-refund, and auto-create a fund transfer request with supporting documents pre-attached — so that eligible customer refunds are initiated consistently without manual effort.
+
+As an Operations staff member (Maker), I want to see auto-created pay-up refund FTRs in my queue so I can review the beneficiary and amount details and approve them into the transfer pipeline.","Automates the monthly identification and creation of fund transfer requests for customers who are owed a cash refund from their pay-up balance. The system evaluates which pay-up balances are eligible for automatic refund based on the originating event, verifies the customer has a registered bank account or PromptPay, reserves the balance immediately upon FTR creation to prevent double-refund, and pre-attaches the required customer documents. Customers with no account on record, or whose balance originated from a non-eligible event, are excluded — they must contact the company to initiate their own refund.","System (monthly batch):
+• Scan pay-up bucket data for balances eligible for auto-refund:
+  - BOT - Int on Int Refund → eligible
+  - BOT - Nano Billpayment → eligible
+  - BOT - Guarantee Refund → eligible
+  - Asset Sold → eligible
+  - Customer Repayment Event → NOT eligible (customer must contact company)
+  - Other events → NOT eligible
+• Check customer document database for registered bank account or PromptPay number
+• If account found → auto-create FTR (request type: Pay-Up Refund / transfer type: Customer Transfer) with ID card and bank account documents pre-attached from customer doc database
+• Immediately after FTR creation → reserve (decrease) pay-up balance to prevent double-refund
+• If no account found → skip; customer appears in separate missing-account report (out of scope)
+• Each eligible balance creates one separate FTR (1-to-1 mapping)
+
+Maker (reviewing auto-created FTRs):
+• Review pre-filled FTR: beneficiary, amount, destination account (bank account or PromptPay), attached documents
+• Confirm destination account if both bank account and PromptPay are available
+• Approve → FTT created, enters Checker queue (standard F4/F5 pipeline)
+• Reject with mandatory reason → FTR permanently closed","External system — not part of H2H Fund Transfer modules (M1–M7). This feature lives in the Pay-Up Refund System and feeds into the H2H pipeline via the standard FTR creation channel. 1-to-1 mapping: each eligible balance generates one FTR. Missing-account cases handled by a separate existing report. Pay-up balance is reserved on FTR creation to block concurrent refund attempts for the same balance.","Happy Path:
+• Month-end batch → Customer A has BOT-Int on Int Refund balance + registered bank account → FTR auto-created with ID card + bank account doc pre-attached → pay-up balance reserved → FTR in PENDING_MAKER → Maker reviews → approves → FTT enters Checker pipeline
+
+Multiple Balances (same customer):
+• Customer A has balance A (BOT-Int on Int Refund) and balance B (BOT-Guarantee Refund) → system creates FTR-1 and FTR-2 separately; each balance reserved individually
+
+No Account — Skip:
+• Customer B has eligible balance but no bank account or PromptPay → no FTR created; appears in separate missing-account report
+
+Non-Eligible Event:
+• Customer C has customer repayment event balance → not eligible; no FTR created; customer must contact company
+
+Both Account and PromptPay:
+• Customer D has both registered → FTR created; Maker confirms correct destination on review","Who: Business Analyst + Technical team (to trigger month-end batch manually in UAT)
+Environment: UAT with F3 (FTR pipeline) operational; Pay-Up system connected to test customer doc database
+
+Steps:
+1. Trigger batch with Customer A (eligible balance + registered bank account) → confirm FTR auto-created with correct amount, beneficiary, and pre-attached docs
+2. Confirm pay-up balance is reserved in the pay-up bucket immediately after FTR creation
+3. Trigger batch for Customer B (eligible balance, no account) → confirm no FTR created
+4. Trigger batch for Customer C (non-eligible event) → confirm no FTR created
+5. Trigger batch for Customer A with two separate eligible balances → confirm two separate FTRs created, each with its own pay-up reserve
+6. Trigger batch for Customer D (both bank account and PromptPay) → confirm FTR created; Maker can confirm destination on review
+7. Maker reviews and approves FTR from step 1 → confirm FTT enters Checker queue
+
+Sign-off: All 7 steps pass",
