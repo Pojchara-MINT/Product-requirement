@@ -26,7 +26,7 @@
 | Role | เห็น FTT สถานะ | หน้าที่ |
 |------|--------------|---------|
 | Checker | `PENDING_CHECKER` ที่ตัวเองจองเท่านั้น | ตรวจสอบและ Approve → PENDING_SIGNER / Reject → REJECTED |
-| Signer | `PENDING_SIGNER` ที่ตัวเองจองเท่านั้น | ตรวจสอบและ Approve → WAITING_TRANSFER / Reject → REJECTED |
+| Signer | `PENDING_SIGNER` ที่ตัวเองจองเท่านั้น | ตรวจสอบและ Approve → TRANSFER_SUCCESS / PENDING_BANK / PENDING_SIGNER (stay) / Reject → REJECTED |
 
 > แสดงเฉพาะ FTT ที่ User คนนี้เป็นผู้จอง (assigned_to = current_user)
 
