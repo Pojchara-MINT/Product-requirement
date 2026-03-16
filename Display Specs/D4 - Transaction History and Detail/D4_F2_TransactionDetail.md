@@ -79,7 +79,7 @@ D4_F2 ใช้ **3-Panel Layout** เช่นเดียวกับ D3:
 
 ## Panel 3 — FTT Detail (ขวา)
 
-แสดงรายละเอียด FTT แบบ **Read-only** — ไม่มี Action Buttons ใดๆ
+แสดงรายละเอียด FTT แบบ **Read-only** — ยกเว้น state = `TRANSFER_FAIL` ที่ Ops Manager สามารถดำเนินการต่อได้ (ดู ส่วนที่ 3)
 
 ### ส่วนที่ 1 — ข้อมูลรายการ
 
@@ -103,10 +103,35 @@ D4_F2 ใช้ **3-Panel Layout** เช่นเดียวกับ D3:
 |-------|-------------|-------|
 | ผลตรวจสอบบัญชีปลายทาง | ผลการ Verify บัญชีจากธนาคาร | ผ่าน (เขียว) / ไม่ผ่าน (แดง) / ยังไม่ได้รับผล (เทา) |
 | ผลเงื่อนไขโอนเงิน | ผล Internal Rule | ผ่าน (เขียว) / ไม่ผ่าน (แดง) / ยังไม่ได้รับผล (เทา) |
-| สถานะรายการ | สถานะปัจจุบันของ FTT | สำเร็จ (เขียว) / ปฏิเสธ (แดง) / ยกเลิก (แดง) / รอดำเนินการ (เหลือง) |
+| สถานะรายการ | สถานะปัจจุบันของ FTT | TRANSFER_SUCCESS (เขียว) / REJECTED (แดง) / TRANSFER_FAIL (แดง) / PENDING_CHECKER / PENDING_SIGNER / PENDING_BANK (เหลือง) |
 | ผลการโอนเงินจากธนาคาร | ผลตอบกลับจากธนาคาร | Success (เขียว) / Fail (แดง) / Pending (เหลือง) |
 
-> ทุก Field ใน Panel 3 เป็น Read-only — ไม่มีปุ่ม ยืนยัน / ยกเลิก
+> ทุก Field ใน Panel 3 เป็น Read-only — ยกเว้น ส่วนที่ 3 (Action) ที่แสดงเฉพาะ state = `TRANSFER_FAIL`
+
+---
+
+### ส่วนที่ 3 — การดำเนินการ (เฉพาะ state = `TRANSFER_FAIL`)
+
+> **แสดงเฉพาะ:** FTT state = `TRANSFER_FAIL` **และ** Role = `Ops Manager`
+
+| ปุ่ม | สี | Action | State After |
+|------|-----|--------|------------|
+| RE-SUBMIT | เขียว | ส่ง FTT กลับเข้า D2 Pool ของ Checker ใหม่ — Background checks ถูก Re-trigger | `PENDING_CHECKER` (unassigned) |
+| REJECT | แดง | ปิด FTT ถาวร | `REJECTED` |
+
+**RE-SUBMIT Flow:**
+
+| Step | Action | System Response |
+|------|--------|----------------|
+| 1 | Ops Manager กด **RE-SUBMIT** | ระบบแสดง Confirmation Modal |
+| 2 | Ops Manager กดยืนยัน | FTT state → `PENDING_CHECKER` — FTT ปรากฏใน D2 Pool ของ Checker ใหม่ พร้อม Re-trigger background checks |
+
+**REJECT Flow:**
+
+| Step | Action | System Response |
+|------|--------|----------------|
+| 1 | Ops Manager กด **REJECT** | ระบบแสดง Confirmation Modal พร้อม Reason dropdown (required) |
+| 2 | Ops Manager เลือก Reason และกดยืนยัน | FTT state → `REJECTED` — Terminal state |
 
 ---
 

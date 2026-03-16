@@ -46,15 +46,29 @@
 | Role | State Before | State After | Side Effect |
 |------|-------------|------------|-------------|
 | Checker | `PENDING_CHECKER` | `PENDING_SIGNER` | FTT หายจาก D3 ของ Checker → เข้า D2 Pool ให้ Signer จอง |
-| Signer | `PENDING_SIGNER` | `BANK_SUBMITTED` (สำเร็จ) / `PENDING_SIGNER` (ล้มเหลว) | ระบบส่งคำสั่งโอนเงินไปธนาคาร — แสดง **Spinner** ระหว่างรอผลตอบกลับ |
+| Signer | `PENDING_SIGNER` | `TRANSFER_SUCCESS` (Step 2 success) / `PENDING_BANK` (Step 2 code 9999) / `PENDING_SIGNER` (Step 2 other fail) | ระบบส่งคำสั่งโอนเงินไปธนาคาร — แสดง **Spinner** ระหว่างรอผลตอบกลับ |
+
+### TP7 — rsTransID Freshness Check (Signer เท่านั้น)
+
+ก่อนระบบส่ง Bank Step 2 (Fund Transfer Submit) ระบบตรวจสอบความสดใหม่ของ rsTransID ที่ได้รับจาก Bank Step 1 (Account Inquiry) อัตโนมัติ
+
+| ผล TP7 | Action ของระบบ | User เห็นอะไร |
+|--------|---------------|--------------|
+| rsTransID **ยังไม่หมดอายุ** | ส่ง Bank Step 2 ทันที | Spinner (ดูด้านล่าง) |
+| rsTransID **หมดอายุแล้ว** | Re-run Bank Step 1 (Account Inquiry) อัตโนมัติเพื่อรับ rsTransID ใหม่ → จากนั้นส่ง Bank Step 2 | Spinner ต่อเนื่อง (User ไม่ต้องทำอะไรเพิ่ม) |
+
+> ระบบจัดการ TP7 และ re-inquiry อัตโนมัติทั้งหมด — User เห็นเพียง Spinner ระหว่างรอผล
+
+---
 
 ### Loading State (Signer เท่านั้น)
 
 | Step | State | Display |
 |------|-------|---------|
 | Signer กดยืนยันใน Modal | รอธนาคารตอบกลับ | แสดง **Spinning / Loading indicator** — Block UI ไม่ให้กดซ้ำ |
-| ธนาคารตอบ: สำเร็จ | `BANK_SUBMITTED` | Spinner หาย → FTT หายจาก D3 |
-| ธนาคารตอบ: ล้มเหลว | `PENDING_SIGNER` (คงเดิม) | Spinner หาย → แสดง Section **ผลการโอนเงินจากธนาคาร** ใน Panel 3 |
+| Bank Step 2 สำเร็จ | `TRANSFER_SUCCESS` | Spinner หาย → FTT หายจาก D3 |
+| Bank Step 2 Fail code 9999 | `PENDING_BANK` | Spinner หาย → FTT หายจาก D3 (Worker จะ Poll Step 3 ต่อ) |
+| Bank Step 2 Fail other code | `PENDING_SIGNER` (คงเดิม) | Spinner หาย → แสดง Section **ผลการโอนเงินจากธนาคาร** ใน Panel 3 พร้อม Error Code |
 
 ---
 

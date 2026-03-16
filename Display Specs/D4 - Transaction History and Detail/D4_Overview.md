@@ -33,16 +33,9 @@ D4 มี 2 ระดับ:
 
 ---
 
-## Display Condition (Role-Based)
+## Display Condition
 
-| Role | เห็น FTT สถานะ |
-|------|--------------|
-| Maker | FTT ที่ตัวเองสร้าง (FTR ของตัวเอง) |
-| Checker | FTT ทั้งหมดที่ผ่าน PENDING_CHECKER |
-| Signer | FTT ทั้งหมดที่ผ่าน PENDING_SIGNER |
-| Ops Manager | FTT ทั้งหมด |
-
-> **TBD** — Role visibility scope ยังรอการยืนยันจาก PO
+> ทุก Role (Maker, Checker, Signer, Ops Manager) เห็น FTT **ทุกรายการ ทุกสถานะ** ใน D4 เหมือนกัน — ไม่มีการกรองตาม Role
 
 ---
 
@@ -59,7 +52,10 @@ D4 มี 2 ระดับ:
 
 | State | ความหมาย |
 |-------|---------|
+| `CREATED` | FTT สร้างแล้ว — Background checks กำลังทำงาน |
 | `PENDING_CHECKER` | รอ Checker ตรวจสอบ |
-| `PENDING_SIGNER` | รอ Signer อนุมัติ |
-| `BANK_SUBMITTED` | ส่งธนาคารแล้ว (สำเร็จ) |
-| `REJECTED` | ถูกยกเลิก |
+| `PENDING_SIGNER` | Checker อนุมัติแล้ว — รอ Signer อนุมัติ |
+| `PENDING_BANK` | Signer อนุมัติแล้ว — Bank Step 2 ตอบ code 9999 (ธนาคารยังไม่ยืนยัน) — Worker กำลัง Poll Step 3 |
+| `TRANSFER_SUCCESS` | โอนเงินสำเร็จ — ยืนยันจากธนาคาร (Step 2 หรือ Step 3) |
+| `TRANSFER_FAIL` | โอนเงินล้มเหลว — ยืนยันจากธนาคาร (Step 3 หรือ Reconcile T+1) — Ops Manager สามารถ Re-submit หรือ Reject ได้จาก D4 |
+| `REJECTED` | ถูกยกเลิกโดย Checker / Signer / Ops Manager |
