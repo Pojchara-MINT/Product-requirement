@@ -141,14 +141,30 @@
 | Header | **การอนุมัติ** |
 | ประวัติการทำรายการ | Link (มุมขวาบน) → เปิด Status Page |
 | ปุ่ม ยกเลิก | สีแดง — เปิด Rejection Form ใน Panel 3 (แสดงทุก case) |
-| ปุ่ม ยืนยัน | สีเขียว — เปิด Confirmation Modal (แสดงเมื่อ validation = ผ่าน หรือ ไม่ผ่าน) |
-| ปุ่ม Retry | สีเหลือง — Trigger Precheck ใหม่ (แสดงแทน ยืนยัน เมื่อ validation = ยังไม่ได้รับผล) |
+| ปุ่ม ยืนยัน | สีเขียว — เปิด Confirmation Modal (แสดงเมื่อ validation = ผ่าน หรือ ไม่ผ่าน Non-retryable) |
+| ปุ่ม Retry | สีเหลือง — Trigger Precheck ใหม่ (แสดงแทน ยืนยัน เมื่อเข้าเงื่อนไข Retryable — ดูตารางด้านล่าง) |
 | หมายเหตุ | Text field (Optional) — Placeholder: *"กรุณาระบุข้อความหรือชื่อไฟล์"* |
 
 ### Action Button ตาม Validation State
 
-| Validation State | ปุ่มที่แสดง |
-|-----------------|-----------|
-| ผ่าน | ยกเลิก + ยืนยัน |
-| ไม่ผ่าน | ยกเลิก + ยืนยัน |
-| ยังไม่ได้รับผล | ยกเลิก + **Retry** |
+> ผลตรวจสอบบัญชีปลายทาง (Precheck) เป็นตัวตัดสินปุ่มหลัก — ผลเงื่อนไขโอนเงิน (Business Validation) ไม่เปลี่ยนปุ่ม ยกเว้นกรณีที่ยังไม่ได้รับผล
+
+| ผลตรวจสอบบัญชีปลายทาง | ผลเงื่อนไขโอนเงิน | ปุ่มที่แสดง |
+|----------------------|-----------------|-----------|
+| ผ่าน | ผ่าน | ยกเลิก + ยืนยัน |
+| ผ่าน | ไม่ผ่าน | ยกเลิก + ยืนยัน |
+| ผ่าน | ยังไม่ได้รับผล | ยกเลิก + **Retry** |
+| ไม่ผ่าน (Retryable Code) | ใดก็ได้ | ยกเลิก + **Retry** |
+| ไม่ผ่าน (Non-retryable Code) | ใดก็ได้ | **ยกเลิก อย่างเดียว** |
+| ยังไม่ได้รับผล | ใดก็ได้ | ยกเลิก + **Retry** |
+
+> **Retryable / Non-retryable Response Codes:** TBD — รอข้อมูลจาก Dev / ธนาคาร (ดู [D3_F4_ValidationStatus.md](D3_F4_ValidationStatus.md))
+
+### Retry Flow
+
+| Step | Action | System Response |
+|------|--------|----------------|
+| 1 | User กดปุ่ม **Retry** | ระบบแสดง Spinner — Re-trigger Background Checks (Bank Step 1 + Business Validation) |
+| 2 | ได้รับผลใหม่ | Panel 3 ส่วนที่ 1 อัปเดตผลการตรวจสอบ |
+| 3a | ผลใหม่ = ผ่านทั้งคู่ หรือ ไม่ผ่าน (Non-retryable) | ปุ่มเปลี่ยนเป็น **ยืนยัน** |
+| 3b | ผลใหม่ = ยังไม่ได้รับผล หรือ ไม่ผ่าน (Retryable) | ปุ่ม **Retry** ยังคงแสดงอยู่ |

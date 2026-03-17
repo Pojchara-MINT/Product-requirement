@@ -72,6 +72,41 @@
 
 ---
 
+## Retry Flow
+
+### เงื่อนไขที่แสดงปุ่ม Retry
+
+ดูตาราง Action Button ใน [D3_F1_DisplayMyTasks.md](D3_F1_DisplayMyTasks.md) — ปุ่ม Retry แสดงเมื่อ:
+- ผลตรวจสอบบัญชีปลายทาง = ยังไม่ได้รับผล (รอผลจากธนาคาร)
+- ผลตรวจสอบบัญชีปลายทาง = ไม่ผ่าน และเป็น Retryable Response Code
+- ผลเงื่อนไขโอนเงิน = ยังไม่ได้รับผล (แม้ Precheck จะผ่านแล้ว)
+
+### Retry Action
+
+| Step | Action | System Response |
+|------|--------|----------------|
+| 1 | User กดปุ่ม **Retry** | ระบบแสดง Confirmation Modal: "ต้องการส่งคำขอตรวจสอบบัญชีปลายทางใหม่หรือไม่" |
+| 2 | User กด **ยืนยัน** ใน Modal | ระบบ re-run **Bank Step 1 (Verify Account)** + **M4 Internal Rule Check** ทันที |
+| 3 | รอผลตอบกลับ | แสดง Spinner — Block UI ไม่ให้กดซ้ำ |
+| 4 | ได้รับผลใหม่ | Spinner หาย → Section ผลตรวจสอบบัญชีปลายทาง อัปเดต → ปุ่มเปลี่ยนตาม Action Button Logic |
+
+> Retry = manual re-trigger เทียบเท่า TP4 (Bank Step 1 + M4) — ระบบดึงผลใหม่จากธนาคารและประเมินกฎภายในใหม่ทั้งหมด
+
+### Expected Result หลัง Retry
+
+| ผลใหม่ | State | ปุ่มที่แสดง |
+|--------|-------|-----------|
+| ผ่านทั้งคู่ | คงเดิม (PENDING_CHECKER / PENDING_SIGNER) | ยกเลิก + ยืนยัน |
+| Precheck ผ่าน, BV ไม่ผ่าน | คงเดิม | ยกเลิก + ยืนยัน |
+| Precheck ผ่าน, BV ยังไม่ได้รับผล | คงเดิม | ยกเลิก + Retry |
+| Precheck ไม่ผ่าน (Retryable) | คงเดิม | ยกเลิก + Retry |
+| Precheck ไม่ผ่าน (Non-retryable) | คงเดิม | ยกเลิก อย่างเดียว |
+| ยังไม่ได้รับผล (Timeout / ธนาคารไม่ตอบ) | คงเดิม | ยกเลิก + Retry |
+
+> **Non-retryable Response Codes:** TBD — รอข้อมูลจาก Dev / ธนาคาร (ดู [D3_F4_ValidationStatus.md](D3_F4_ValidationStatus.md))
+
+---
+
 ## Reject Flow
 
 ### กดปุ่ม ยกเลิก
